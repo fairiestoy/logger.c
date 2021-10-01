@@ -74,5 +74,6 @@ extern void logger_toggle(bool);
 extern bool logger_get_status(void);
 extern bool logger_is_initialized(void);
 extern int logger_factory_console(int);
+extern int logger_factory_file(int,char const * const);
 
 #endif // HEADER CHECK

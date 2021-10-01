@@ -83,6 +83,33 @@ logger_factory_console(int log_level) {
   return logger_setup_context(log_level,stdout,logger_factory_console_output,logger_factory_console_transform,true);
 }
 
+static FILE *
+logger_factory_file_file;
+
+static void
+logger_factory_file_exit(void) {
+  fflush(logger_factory_file_file);
+  fclose(logger_factory_file_file);
+}
+
+extern int
+logger_factory_file(int log_level,char const * const file_path) {
+  if(file_path == (void*)0 || log_level < LOGGER_EMERGENCY || log_level > LOGGER_DEBUG) {
+    return -1;
+  }
+  logger_factory_file_file = fopen(file_path,"w");
+  if(logger_factory_file_file == (void*)0) {
+    perror("Could not open File for factory setup");
+    return -2;
+  }
+  if(atexit(logger_factory_file_exit) != 0) {
+    fprintf(stderr,"Could not setup atexit handler\n");
+    fclose(logger_factory_file_file);
+    return -3;
+  }
+  return logger_setup_context(log_level,logger_factory_file_file,logger_factory_console_output,logger_factory_console_transform,true);
+}
+
 /*
 Parameters:
 -----------
@@ -387,18 +414,27 @@ tests_init_check(void **state) {
 static void
 tests_simpleoutputs_check(void **state) {
   logger_info("This is one Test");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 INFO       logger.c:389 - This is one Test\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 INFO       ./src/logger.c:416 - This is one Test\n");
   memset(tests_output_simple,0,LOGGER_MESSAGE_BUFFER);
   logger_debug("This is a parameter test: %s","parameter");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      logger.c:392 - This is a parameter test: parameter\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:419 - This is a parameter test: parameter\n");
   memset(tests_output_simple,0,LOGGER_MESSAGE_BUFFER);
   logger_debug("Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      logger.c:395 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:422 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
   logger_toggle(false);
   logger_debug("A string that will disappear");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      logger.c:395 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:422 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
   logger_toggle(true);
   memset(tests_output_simple,0,LOGGER_MESSAGE_BUFFER);
+}
+
+static void
+tests_simplefile_check(void **state) {
+  assert_true(logger_factory_file(LOGGER_DEBUG,"./logger_tests_long_filename.txt") > 0);
+  assert_true(logger_set_transform(tests_init_transform) == 1);
+  logger_info("this is one exact test output");
+  logger_debug("Another line in the file %s","lsdkfjlsdkfjsldfkjsldfkjsdflksjdflkjsdfklj");
+  remove("./logger_tests_long_filename.txt");
 }
 
 int main(int argc,char *argv[argc]) {
@@ -407,6 +443,7 @@ int main(int argc,char *argv[argc]) {
     cmocka_unit_test(tests_preinit_check),
     cmocka_unit_test(tests_init_check),
     cmocka_unit_test(tests_simpleoutputs_check),
+    cmocka_unit_test(tests_simplefile_check),
   };
   return cmocka_run_group_tests(tests,(void*)0,(void*)0);
 }
