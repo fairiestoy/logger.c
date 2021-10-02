@@ -84,18 +84,24 @@ logger_factory_console(int log_level) {
 }
 
 static FILE *
-logger_factory_file_file;
+logger_factory_file_file = (void*)0;
 
 static void
 logger_factory_file_exit(void) {
-  fflush(logger_factory_file_file);
-  fclose(logger_factory_file_file);
+  if(logger_factory_file_file != (void*)0) {
+    fflush(logger_factory_file_file);
+    fclose(logger_factory_file_file);
+  }
 }
 
 extern int
 logger_factory_file(int log_level,char const * const file_path) {
   if(file_path == (void*)0 || log_level < LOGGER_EMERGENCY || log_level > LOGGER_DEBUG) {
     return -1;
+  }
+  if(logger_factory_file_file != (void*)0) {
+    fflush(logger_factory_file_file);
+    fclose(logger_factory_file_file);
   }
   logger_factory_file_file = fopen(file_path,"w");
   if(logger_factory_file_file == (void*)0) {
@@ -110,6 +116,40 @@ logger_factory_file(int log_level,char const * const file_path) {
   return logger_setup_context(log_level,logger_factory_file_file,logger_factory_console_output,logger_factory_console_transform,true);
 }
 
+static char *
+logger_factory_csv_transform(time_t const timestamp,int const log_level,char const * const file, int const filenumber,char * message) {
+  if(log_level < LOGGER_EMERGENCY || log_level > LOGGER_DEBUG || message == (void*)0 || file == (void*)0) {
+    fprintf(stderr,"Could not transform message, invalid parameters");
+    return (void*)0;
+  }
+  char tmp_buffer[LOGGER_MESSAGE_BUFFER] = {0};
+  char const log_level_mapping[][10] = {
+    "emergency",
+    "alert",
+    "critical",
+    "error",
+    "warning",
+    "notice",
+    "info",
+    "debug"
+  };
+  if(snprintf(tmp_buffer,LOGGER_MESSAGE_BUFFER,"%ld,%s,%s,%i,%s\n",timestamp,log_level_mapping[log_level],file,filenumber,message) < 1) {
+    fprintf(stderr,"Could not amalgamate Message - sprintf returned 0 bytes");
+    return (void*)0;
+  }
+  memset(message,0,LOGGER_MESSAGE_BUFFER);
+  memcpy(message,&tmp_buffer,LOGGER_MESSAGE_BUFFER);
+  return message;
+}
+
+extern int
+logger_factory_csv(int log_level,char const * const file_path) {
+  int ret_code = logger_factory_file(log_level,file_path);
+  if(ret_code <= 0) {return ret_code;}
+  logger_set_transform(logger_factory_csv_transform);
+  fprintf(logger_factory_file_file,"timestamp,priority,filename,linenumber,message\n");
+  return ret_code;
+}
 /*
 Parameters:
 -----------
@@ -414,16 +454,16 @@ tests_init_check(void **state) {
 static void
 tests_simpleoutputs_check(void **state) {
   logger_info("This is one Test");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 INFO       ./src/logger.c:416 - This is one Test\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 INFO       ./src/logger.c:456 - This is one Test\n");
   memset(tests_output_simple,0,LOGGER_MESSAGE_BUFFER);
   logger_debug("This is a parameter test: %s","parameter");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:419 - This is a parameter test: parameter\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:459 - This is a parameter test: parameter\n");
   memset(tests_output_simple,0,LOGGER_MESSAGE_BUFFER);
   logger_debug("Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:422 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:462 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
   logger_toggle(false);
   logger_debug("A string that will disappear");
-  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:422 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
+  assert_string_equal(tests_output_simple,"Thu Sep 30 23:02:25 2021 DEBUG      ./src/logger.c:462 - Another slightly longer message 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...\n");
   logger_toggle(true);
   memset(tests_output_simple,0,LOGGER_MESSAGE_BUFFER);
 }
@@ -434,7 +474,49 @@ tests_simplefile_check(void **state) {
   assert_true(logger_set_transform(tests_init_transform) == 1);
   logger_info("this is one exact test output");
   logger_debug("Another line in the file %s","lsdkfjlsdkfjsldfkjsldfkjsdflksjdflkjsdfklj");
+  fflush(logger_factory_file_file);
+  fclose(logger_factory_file_file);
+  logger_factory_file_file = (void*)0;
   remove("./logger_tests_long_filename.txt");
+}
+
+static void
+tests_simplecsv_check(void **state) {
+  assert_true(logger_factory_csv(LOGGER_DEBUG,"./logger_tests_long_filename.csv") > 0);
+  logger_info("this is the first test");
+  logger_debug("about to finish the test: %s","02034020342394827394");
+  for(size_t index = 0;index < 200;index++) {
+    switch(index % (LOGGER_DEBUG + 1)) {
+      case LOGGER_EMERGENCY:
+        logger_emergency("a message that comes in from the loop");
+        break;
+      case LOGGER_ALERT:
+        logger_alert("a message that comes in from the loop");
+        break;
+      case LOGGER_CRITICAL:
+        logger_critical("a message that comes in from the loop");
+        break;
+      case LOGGER_ERROR:
+        logger_error("a message that comes in from the loop");
+        break;
+      case LOGGER_WARNING:
+        logger_warning("a message that comes in from the loop");
+        break;
+      case LOGGER_NOTICE:
+        logger_notice("a message that comes in from the loop");
+        break;
+      case LOGGER_INFO:
+        logger_info("a message that comes in from the loop");
+        break;
+      case LOGGER_DEBUG:
+        logger_debug("a message that comes in from the loop");
+        break;
+    }
+    sleep(1);
+  }
+  fflush(logger_factory_file_file);
+  fclose(logger_factory_file_file);
+  logger_factory_file_file = (void*)0;
 }
 
 int main(int argc,char *argv[argc]) {
@@ -444,6 +526,7 @@ int main(int argc,char *argv[argc]) {
     cmocka_unit_test(tests_init_check),
     cmocka_unit_test(tests_simpleoutputs_check),
     cmocka_unit_test(tests_simplefile_check),
+    cmocka_unit_test(tests_simplecsv_check),
   };
   return cmocka_run_group_tests(tests,(void*)0,(void*)0);
 }
